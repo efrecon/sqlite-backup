@@ -11,8 +11,6 @@ as [dockron].
 
 ## Usage and Command-Line Options
 
-### `backup.sh`
-
 This shell (not bash) script has the following options:
 
 ```
@@ -36,7 +34,7 @@ Usage:
 Note that for the removal of older backups to properly function, `backup.sh`
 needs to "own" the target directory.
 
-### Docker
+## Docker
 
 `backup.sh` is specified as the default entrypoint for the image. By default,
 the Docker image encapsulates `backup.sh` behind [`tini`][tini] so that it will
@@ -44,7 +42,7 @@ be able to properly terminate sub-processes when stopping the container.
 
   [tini]: https://github.com/krallin/tini
 
-#### Example
+### Example
 
 Provided that you have built a Docker image called `efrecon/sqlite-backup` and
 have a `db.sqlite3` file in the current directory, the following command would
