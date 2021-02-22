@@ -172,8 +172,8 @@ fi
 if [ -n "${SQLITE_BACKUP_THEN}" ]; then
     log "Executing ${SQLITE_BACKUP_THEN}"
     if [ -f "${SQLITE_BACKUP_DESTINATION}/$FILE" ] && [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
-        "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$FILE"
+        eval "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$FILE"
     else
-        "${SQLITE_BACKUP_THEN}"
+        eval "${SQLITE_BACKUP_THEN}"
     fi
 fi
