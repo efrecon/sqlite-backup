@@ -17,6 +17,7 @@ SQLITE_BACKUP_DESTINATION=${SQLITE_BACKUP_DESTINATION:-"."}
 SQLITE_BACKUP_NAME=${SQLITE_BACKUP_NAME:-"%Y%m%d-%H%M%S.sql"}
 SQLITE_BACKUP_PENDING=${SQLITE_BACKUP_PENDING:-".pending"}
 SQLITE_BACKUP_THEN=${SQLITE_BACKUP_THEN:-""}
+SQLITE_BACKUP_WITHARG=${SQLITE_BACKUP_WITHARG:-1}
 
 # Dynamic vars
 cmdname=$(basename "$(readlink -f "$0")")
@@ -82,6 +83,12 @@ while [ $# -gt 0 ]; do
         --pending=*)
             SQLITE_BACKUP_PENDING="${1#*=}"; shift 1;;
 
+        --with-arg)
+            SQLITE_BACKUP_WITHARG=1; shift;;
+
+        --no-arg)
+            SQLITE_BACKUP_WITHARG=0; shift;;
+
         -\? | --help)
             usage 0;;
         --)
@@ -132,6 +139,11 @@ else
     DSTFILE=${FILE}
 fi
 
+# Create directory if it does not exist
+if ! [ -d "${SQLITE_BACKUP_DESTINATION}" ]; then
+    log "Creating destination directory ${SQLITE_BACKUP_DESTINATION}"
+    mkdir -p "${SQLITE_BACKUP_DESTINATION}"
+fi
 
 # Install (pending) backup file into proper name if relevant, or remove it
 # from disk.
@@ -159,9 +171,9 @@ fi
 
 if [ -n "${SQLITE_BACKUP_THEN}" ]; then
     log "Executing ${SQLITE_BACKUP_THEN}"
-    if [ -f "${SQLITE_BACKUP_DESTINATION}/$FILE" ]; then
-        eval "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$FILE"
+    if [ -f "${SQLITE_BACKUP_DESTINATION}/$FILE" ] && [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
+        exec "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$FILE"
     else
-        eval "${SQLITE_BACKUP_THEN}"
+        exec "${SQLITE_BACKUP_THEN}"
     fi
 fi
