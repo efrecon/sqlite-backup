@@ -1,4 +1,4 @@
-ARG ALPINE_VERSION=3.13.2
+ARG ALPINE_VERSION=3.15
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk add --no-cache sqlite zip tini
