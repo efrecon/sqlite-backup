@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 
 
 if [ -t 1 ]; then
@@ -18,6 +18,8 @@ SQLITE_BACKUP_NAME=${SQLITE_BACKUP_NAME:-"%Y%m%d-%H%M%S.sql"}
 SQLITE_BACKUP_PENDING=${SQLITE_BACKUP_PENDING:-".pending"}
 SQLITE_BACKUP_THEN=${SQLITE_BACKUP_THEN:-""}
 SQLITE_BACKUP_WITHARG=${SQLITE_BACKUP_WITHARG:-1}
+SQLITE_BACKUP_RETRIES=${SQLITE_BACKUP_RETRIES:-0}
+SQLITE_BACKUP_SLEEP=${SQLITE_BACKUP_SLEEP:-5}
 
 # Dynamic vars
 cmdname=$(basename "$(readlink -f "$0")")
@@ -25,71 +27,73 @@ appname=${cmdname%.*}
 
 # Print usage on stderr and exit
 usage() {
-  exitcode="$1"
-  cat << USAGE >&2
+    sed -E 's/^\s+//g' <<-EOF
+        $0 will backup all tables of a SQLite database, and rotate dumps to
+        keep disk usage under control.
 
-Description:
-  $cmdname will backup all tables of a SQLite database, and rotate dumps to
-  keep disk usage under control.
-
-Usage:
-  $cmdname [-option arg]...
-
-  where all dash-led single options are as follows:
-    -v              Be more verbose
-    -f database     Path to DB file to backup (mandatory)
-    -d destination  Directory where to place (and rotate) backups.
-    -n basename     Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql
-    -k keep         Number of backups to keep, defaults to empty, meaning keep all backups
-    -t command      Command to execute once done, path to backup will be passed as an argument.
-    -P pending      Extension to give to file while creating backup
-USAGE
-  exit "$exitcode"
+        Options:
+EOF
+    head -n 100 "$0" |
+        grep -E '\s+-[a-zA-Z-].*)\s+#' |
+        sed -E \
+            -e 's/^\s+/    /g' \
+            -e 's/)\s+#\s+/:\t/g'
+    exit "${1:-0}"
 }
 
 # Parse options
 while [ $# -gt 0 ]; do
     case "$1" in
-        -k | --keep)
+        -k | --keep) # Number of backups to keep, defaults to empty, meaning keep all backups
             SQLITE_BACKUP_KEEP=$2; shift 2;;
         --keep=*)
             SQLITE_BACKUP_KEEP="${1#*=}"; shift 1;;
 
-        -f | --file | --db | --database)
+        -f | --file | --db | --database) # Path to DB file to backup (mandatory)
             SQLITE_BACKUP_DB=$2; shift 2;;
         --file=* | --db=* | --database=*)
             SQLITE_BACKUP_DB="${1#*=}"; shift 1;;
 
-        -d | --dest | --destination)
+        -d | --dest | --destination) # Directory where to place (and rotate) backups.
             SQLITE_BACKUP_DESTINATION=$2; shift 2;;
         --dest=* | --destination=*)
             SQLITE_BACKUP_DESTINATION="${1#*=}"; shift 1;;
 
-        -n | --name)
+        -n | --name) # Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql
             SQLITE_BACKUP_NAME=$2; shift 2;;
         --name=*)
             SQLITE_BACKUP_NAME="${1#*=}"; shift 1;;
 
-        -v | --verbose)
+        -v | --verbose) # Be more verbose
             SQLITE_BACKUP_VERBOSE=1; shift 1;;
 
-        -t | --then)
+        -t | --then) # Command to execute once done, path to backup will be passed as an argument.
             SQLITE_BACKUP_THEN=$2; shift 2;;
         --then=*)
             SQLITE_BACKUP_THEN="${1#*=}"; shift 1;;
 
-        -P | --pending)
+        -r | --retries) # Number of times to retry backup operation.
+            SQLITE_BACKUP_RETRIES=$2; shift 2;;
+        --retries=*)
+            SQLITE_BACKUP_RETRIES="${1#*=}"; shift 1;;
+
+        -s | --sleep) # Number of seconds to sleep between backup attempts
+            SQLITE_BACKUP_SLEEP=$2; shift 2;;
+        --sleep=*)
+            SQLITE_BACKUP_SLEEP="${1#*=}"; shift 1;;
+
+        -P | --pending) # Extension to give to file while creating backup
             SQLITE_BACKUP_PENDING=$2; shift 2;;
         --pending=*)
             SQLITE_BACKUP_PENDING="${1#*=}"; shift 1;;
 
-        --with-arg)
+        --with-arg) # Pass created path to backup file to command
             SQLITE_BACKUP_WITHARG=1; shift;;
 
-        --no-arg)
+        --no-arg) # Do not pass path to backup file to command
             SQLITE_BACKUP_WITHARG=0; shift;;
 
-        -\? | --help)
+        -h | --help) # Print this help and exit
             usage 0;;
         --)
             shift; break;;
@@ -123,6 +127,21 @@ warn() {
     echo "[$(blue "$appname")] [$(red WARN)] [$(date +'%Y%m%d-%H%M%S')] $1" >&2
 }
 
+retry() {
+    while true; do
+        if "$@"; then
+            break
+        fi
+
+        if [ "$SQLITE_BACKUP_RETRIES" -gt "1" ]; then
+            SQLITE_BACKUP_RETRIES=$(( SQLITE_BACKUP_RETRIES - 1 ))
+            log "Failed! $SQLITE_BACKUP_RETRIES retries left"
+            sleep "$SQLITE_BACKUP_SLEEP"
+        else
+            return 1
+        fi
+    done
+}
 
 if [ -z "$SQLITE_BACKUP_DB" ]; then
     warn "No path to DB!"
@@ -148,7 +167,7 @@ fi
 # Install (pending) backup file into proper name if relevant, or remove it
 # from disk.
 log "Starting backup of all databases to $FILE"
-if sqlite3 "$SQLITE_BACKUP_DB" \
+if retry sqlite3 "$SQLITE_BACKUP_DB" \
         .dump \
         .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
     if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
