@@ -13,7 +13,7 @@ as [dockron].
 
 This shell (not bash) script has the following options:
 
-```
+```text
 Description:
   $cmdname will backup all tables of a SQLite database, and rotate dumps to
   keep disk usage under control.
@@ -33,6 +33,17 @@ Usage:
 
 Note that for the removal of older backups to properly function, `backup.sh`
 needs to "own" the target directory.
+
+## Outputs
+
+This script is able to generate two types of backups:
+
++ Textual SQL dumps (as of the `.dump` SQLite command).
++ Binary exact copies of the databases (as of the `.backup` SQLite command).
+
+Unless specified otherwise, the type of the backup will be decided by the
+extension of the basename, e.g. `.sql` for SQL dumps, or `.db` for binary
+database backups.
 
 ## Docker
 
