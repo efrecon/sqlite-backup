@@ -240,7 +240,7 @@ if [ -n "${SQLITE_BACKUP_KEEP}" ]; then
     while [ "$(backups | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
         DELETE=$(backups | head -n 1)
         log "Removing old backup $DELETE"
-        rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DELETE"
+        rm -rf "$DELETE"
     done
 fi
 
