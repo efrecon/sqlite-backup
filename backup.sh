@@ -20,6 +20,8 @@ SQLITE_BACKUP_THEN=${SQLITE_BACKUP_THEN:-""}
 SQLITE_BACKUP_WITHARG=${SQLITE_BACKUP_WITHARG:-1}
 SQLITE_BACKUP_RETRIES=${SQLITE_BACKUP_RETRIES:-0}
 SQLITE_BACKUP_SLEEP=${SQLITE_BACKUP_SLEEP:-5}
+SQLITE_BACKUP_TIMEOUT=${SQLITE_BACKUP_TIMEOUT:-"5000"}
+SQLITE_BACKUP_OUTPUT=${SQLITE_BACKUP_OUTPUT:-"auto"}
 
 # Dynamic vars
 cmdname=$(basename "$(readlink -f "$0")")
@@ -29,11 +31,12 @@ appname=${cmdname%.*}
 usage() {
     sed -E 's/^\s+//g' <<-EOF
         $0 will backup all tables of a SQLite database, and rotate dumps to
-        keep disk usage under control.
+        keep disk usage under control. Dumps can be in textual form (an SQL
+        dump), or as another identical SQLite database file.
 
         Options:
 EOF
-    head -n 100 "$0" |
+    head -n 200 "$0" |
         grep -E '\s+-[a-zA-Z-].*)\s+#' |
         sed -E \
             -e 's/^\s+/    /g' \
@@ -86,6 +89,16 @@ while [ $# -gt 0 ]; do
             SQLITE_BACKUP_PENDING=$2; shift 2;;
         --pending=*)
             SQLITE_BACKUP_PENDING="${1#*=}"; shift 1;;
+
+        -T | --timeout) # Timeout in ms to acquire DB lock
+            SQLITE_BACKUP_TIMEOUT=$2; shift 2;;
+        --timeout=*)
+            SQLITE_BACKUP_TIMEOUT="${1#*=}"; shift 1;;
+
+        -o | --output) # Output type: auto (the default), sql or db (or bin). When auto, guessed from file extension.
+            SQLITE_BACKUP_OUTPUT=$2; shift 2;;
+        --output=*)
+            SQLITE_BACKUP_OUTPUT="${1#*=}"; shift 1;;
 
         --with-arg) # Pass created path to backup file to command
             SQLITE_BACKUP_WITHARG=1; shift;;
@@ -143,9 +156,29 @@ retry() {
     done
 }
 
+# Return the list of current backup files in the destination directory, sorted
+# oldest first.
+backups() {
+    find "$SQLITE_BACKUP_DESTINATION" \
+            -maxdepth 1 \
+            -name "$(printf %s\\n "$SQLITE_BACKUP_NAME" | sed 's/%[a-zA-Z]/*/g')" \
+            -type f \
+            -print0 |
+        xargs -0 ls -1rt
+}
+
 if [ -z "$SQLITE_BACKUP_DB" ]; then
     warn "No path to DB!"
     usage 1
+fi
+
+if [ "$SQLITE_BACKUP_OUTPUT" = "auto" ]; then
+    if printf %s\\n "$SQLITE_BACKUP_NAME" | grep -Eq '\.(sql|txt|dmp|dump)$'; then
+        SQLITE_BACKUP_OUTPUT=dump
+    else
+        SQLITE_BACKUP_OUTPUT=db
+    fi
+    log "Selected output type: $SQLITE_BACKUP_OUTPUT"
 fi
 
 FILE=$(date +"$SQLITE_BACKUP_NAME")
@@ -167,22 +200,45 @@ fi
 # Install (pending) backup file into proper name if relevant, or remove it
 # from disk.
 log "Starting backup of all databases to $FILE"
-if retry sqlite3 "$SQLITE_BACKUP_DB" \
-        .dump \
-        .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
-    if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
-        mv -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" "${SQLITE_BACKUP_DESTINATION}/${FILE}"
-    fi
-    log "Backup done"
-else
-    warn "Could not create backup!"
-    rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
-fi
+case "$SQLITE_BACKUP_OUTPUT" in
+    dump | sql)
+        if retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
+                ".timeout $SQLITE_BACKUP_TIMEOUT" \
+                .dump \
+                .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
+            if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
+                mv -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" "${SQLITE_BACKUP_DESTINATION}/${FILE}"
+            fi
+            log "Backup done"
+        else
+            warn "Could not create backup!"
+            rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
+        fi
+        ;;
+    db | bin | sqlite*)
+        if retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
+                ".timeout $SQLITE_BACKUP_TIMEOUT" \
+                ".backup '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'" \
+                .exit; then
+            if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
+                mv -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" "${SQLITE_BACKUP_DESTINATION}/${FILE}"
+            fi
+            log "Backup done"
+        else
+            warn "Could not create backup!"
+            rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
+        fi
+        ;;
+    *)
+        warn "$SQLITE_BACKUP_OUTPUT is not a recognised backup output type"
+        usage 1
+        ;;
+esac
 
 if [ -n "${SQLITE_BACKUP_KEEP}" ]; then
     # shellcheck disable=SC2012
-    while [ "$(ls "$SQLITE_BACKUP_DESTINATION" -1 | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
-        DELETE=$(ls "$SQLITE_BACKUP_DESTINATION" -1 | sort | head -n 1)
+    while [ "$(backups | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
+        DELETE=$(backups | head -n 1)
         log "Removing old backup $DELETE"
         rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DELETE"
     done
