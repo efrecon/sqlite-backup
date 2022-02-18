@@ -22,6 +22,7 @@ SQLITE_BACKUP_RETRIES=${SQLITE_BACKUP_RETRIES:-0}
 SQLITE_BACKUP_SLEEP=${SQLITE_BACKUP_SLEEP:-5}
 SQLITE_BACKUP_TIMEOUT=${SQLITE_BACKUP_TIMEOUT:-"5000"}
 SQLITE_BACKUP_OUTPUT=${SQLITE_BACKUP_OUTPUT:-"auto"}
+SQLITE_BACKUP_COMPRESSION=${SQLITE_BACKUP_COMPRESSION:-""}
 
 # Dynamic vars
 cmdname=$(basename "$(readlink -f "$0")")
@@ -62,7 +63,7 @@ while [ $# -gt 0 ]; do
         --dest=* | --destination=*)
             SQLITE_BACKUP_DESTINATION="${1#*=}"; shift 1;;
 
-        -n | --name) # Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql
+        -n | --name) # Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql.gz
             SQLITE_BACKUP_NAME=$2; shift 2;;
         --name=*)
             SQLITE_BACKUP_NAME="${1#*=}"; shift 1;;
@@ -99,6 +100,11 @@ while [ $# -gt 0 ]; do
             SQLITE_BACKUP_OUTPUT=$2; shift 2;;
         --output=*)
             SQLITE_BACKUP_OUTPUT="${1#*=}"; shift 1;;
+
+        -c | --compression) # Compression level. When empty, the default, default compression will be triggered when name ends with .gz.
+            SQLITE_BACKUP_COMPRESSION=$2; shift 2;;
+        --compression=*)
+            SQLITE_BACKUP_COMPRESSION="${1#*=}"; shift 1;;
 
         --with-arg) # Pass created path to backup file to command
             SQLITE_BACKUP_WITHARG=1; shift;;
@@ -167,13 +173,46 @@ backups() {
         xargs -0 ls -1rt
 }
 
+# Compress or not the file which path is passed as a parameter. Return the name
+# of the file to keep (either the compressed path or uncompressed).
+compress() {
+    # Compress depending on SQLITE_BACKUP_COMPRESSION and target name. Keep
+    # original file until we have checked the integrity of the target.
+    if [ "$SQLITE_BACKUP_COMPRESSION" = "" ]; then
+        if printf %s\\n "$SQLITE_BACKUP_NAME" | grep -Eq '\.gz$'; then
+            gzip -k "$1"
+        fi
+    elif [ "$SQLITE_BACKUP_COMPRESSION" -gt "0" ]; then
+        gzip -k -"${SQLITE_BACKUP_COMPRESSION}" "$1"
+    fi
+
+    # If we compressed, check integrity. Remove whichever of the files is
+    # relevant, i.e., in most cases, the original file as the compressed file
+    # worked.
+    if [ -f "${1}.gz" ]; then
+        if gzip -t "${1}.gz"; then
+            rm -f "$1"
+            printf %s\\n "${1}.gz"
+        else
+            rm -f "${1}.gz"
+            warn "Compression to ${1}.gz failed"
+            printf %s\\n "${1}"
+        fi
+    else
+        printf %s\\n "${1}"
+    fi
+}
+
+# No DB to backup. Bail out!
 if [ -z "$SQLITE_BACKUP_DB" ]; then
     warn "No path to DB!"
     usage 1
 fi
 
+# Guess output type out of backup file name template extension (no ending $ to
+# be sure we can have .gz also).
 if [ "$SQLITE_BACKUP_OUTPUT" = "auto" ]; then
-    if printf %s\\n "$SQLITE_BACKUP_NAME" | grep -Eq '\.(sql|txt|dmp|dump)$'; then
+    if printf %s\\n "$SQLITE_BACKUP_NAME" | grep -Eq '\.(sql|txt|dmp|dump)'; then
         SQLITE_BACKUP_OUTPUT=dump
     else
         SQLITE_BACKUP_OUTPUT=db
@@ -181,10 +220,17 @@ if [ "$SQLITE_BACKUP_OUTPUT" = "auto" ]; then
     log "Selected output type: $SQLITE_BACKUP_OUTPUT"
 fi
 
-FILE=$(date +"$SQLITE_BACKUP_NAME")
+# Automatically add a .gz when compression is turn on by force and to a give
+# level.
+if [ -n "$SQLITE_BACKUP_COMPRESSION" ] && [ "$SQLITE_BACKUP_COMPRESSION" -gt "0" ]; then
+    SQLITE_BACKUP_NAME="${SQLITE_BACKUP_NAME}.gz"
+    log "Automatically added .gz extension -> $SQLITE_BACKUP_NAME"
+fi
 
 # Decide name of destination file, this takes into account the pending
 # extension, if relevant.
+ZFILE=$(date +"$SQLITE_BACKUP_NAME")
+FILE=$(printf %s\\n "$ZFILE" | sed -E 's/\.gz$//')
 if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
     DSTFILE=${FILE}.${SQLITE_BACKUP_PENDING##.}
 else
@@ -199,32 +245,22 @@ fi
 
 # Install (pending) backup file into proper name if relevant, or remove it
 # from disk.
-log "Starting backup of all databases to $FILE"
+log "Starting backup of all databases to $ZFILE"
 case "$SQLITE_BACKUP_OUTPUT" in
     dump | sql)
-        if retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
+        if ! retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
                 ".timeout $SQLITE_BACKUP_TIMEOUT" \
                 .dump \
                 .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
-            if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
-                mv -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" "${SQLITE_BACKUP_DESTINATION}/${FILE}"
-            fi
-            log "Backup done"
-        else
             warn "Could not create backup!"
             rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
         fi
         ;;
     db | bin | sqlite*)
-        if retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
+        if ! retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
                 ".timeout $SQLITE_BACKUP_TIMEOUT" \
                 ".backup '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'" \
                 .exit; then
-            if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
-                mv -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" "${SQLITE_BACKUP_DESTINATION}/${FILE}"
-            fi
-            log "Backup done"
-        else
             warn "Could not create backup!"
             rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
         fi
@@ -235,8 +271,17 @@ case "$SQLITE_BACKUP_OUTPUT" in
         ;;
 esac
 
+# Compress on demand when we have succeeded making a backup
+if [ -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" ]; then
+    if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
+        mv -f "$(compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}")" "${SQLITE_BACKUP_DESTINATION}/${ZFILE}"
+    else
+        compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" > /dev/null
+    fi
+    log "Backup done"
+fi
+
 if [ -n "${SQLITE_BACKUP_KEEP}" ]; then
-    # shellcheck disable=SC2012
     while [ "$(backups | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
         DELETE=$(backups | head -n 1)
         log "Removing old backup $DELETE"
@@ -246,8 +291,8 @@ fi
 
 if [ -n "${SQLITE_BACKUP_THEN}" ]; then
     log "Executing ${SQLITE_BACKUP_THEN}"
-    if [ -f "${SQLITE_BACKUP_DESTINATION}/$FILE" ] && [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
-        eval "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$FILE"
+    if [ -f "${SQLITE_BACKUP_DESTINATION}/$ZFILE" ] && [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
+        eval "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$ZFILE"
     else
         eval "${SQLITE_BACKUP_THEN}"
     fi
