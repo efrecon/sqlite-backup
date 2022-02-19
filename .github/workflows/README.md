@@ -15,7 +15,7 @@ from the latest release this merge is.
 ### Releasing
 
 The [`release.yml`](./release.yml) supports the [release](../../docs/RELEASE.md)
-process by automatically generating a github release when properly formed tags
+process by automatically generating a GitHub release when properly formed tags
 are made onto the `master` branch. Note that the implementation for the
 extraction of the release notes is stringent when it comes to how the release
 header should be formatted in the [`CHANGELOG.md`](../../CHANGELOG.md).

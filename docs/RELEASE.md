@@ -2,13 +2,13 @@
 
 ## Semantic Versioning
 
-This project follows [semver] (semantic versioning). Release versions should
-look like `MAJOR.MINOR.PATCH`. Increment the:
+This project follows [SemVer][semver] (semantic versioning). Release versions
+should look like `MAJOR.MINOR.PATCH`. Increment the:
 
 + `MAJOR` version when you make incompatible API changes,
-+ `MINOR` version when you add functionality in a backwards compatible manner,
++ `MINOR` version when you add functionality in a backward compatible manner,
   and
-+ `PATCH` version when you make backwards compatible bug fixes.
++ `PATCH` version when you make backward compatible bugfixes.
 
   [semver]: https://semver.org/
 
@@ -22,7 +22,7 @@ To make a release:
    heading with the same version as above, but a leading letter `v`, e.g.
    `## v0.2.3`. Latest release should be at the top of the file. There **MUST**
    be exactly one space between the `##` and the name of the release, e.g.
-   `v0.2.3`, in the markdown.
+   `v0.2.3`, in the Markdown.
 3. Create a git tag with the version as its name on the `main` branch.
 4. Push the tag, e.g. `git push --tags`.
 

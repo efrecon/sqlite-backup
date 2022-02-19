@@ -1,3 +1,4 @@
+---
 name: Publish
 
 on:
@@ -9,4 +10,3 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       push: false
-

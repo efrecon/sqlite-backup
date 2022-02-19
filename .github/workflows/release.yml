@@ -1,3 +1,4 @@
+---
 name: Release
 
 on:
@@ -39,7 +40,7 @@ jobs:
       # next time awk encounters ## again)
       - name: Create Release Notes
         run: |
-          awk "/^## / { p=0 }; p; /^## v${{ steps.semver.outputs.semver }}/ { p=1 }" CHANGELOG.md > ${{ runner.temp }}/relnotes.md
+          awk "/^## / { p=0 }; p; /^## v${{steps.semver.outputs.semver}}/ { p=1 }" CHANGELOG.md > ${{ runner.temp }}/relnotes.md
           cat "${{ runner.temp }}/relnotes.md"
 
       # Whereever the files are located down the area that we have prepared for
