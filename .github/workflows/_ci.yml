@@ -51,7 +51,7 @@ jobs:
 
   hub:
     runs-on: ubuntu-latest
-    if: DOCKERHUB_USERNAME != 0
+    if: secrets.DOCKERHUB_USERNAME != 0
     steps:
       -
         name: Checkout
@@ -85,7 +85,7 @@ jobs:
         # otherwise not work.
         name: Update repo description at Docker Hub
         uses: peter-evans/dockerhub-description@v2
-        if: DOCKERHUB_PASSWORD != 0 && inputs.push
+        if: secrets.DOCKERHUB_PASSWORD != 0 && inputs.push
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
