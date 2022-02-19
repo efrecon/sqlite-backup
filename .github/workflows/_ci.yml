@@ -1,0 +1,132 @@
+---
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        required: false
+        type: boolean
+        default: true
+        description: Publish Docker image that was built
+      full-validation:
+        required: false
+        type: boolean
+        default: false
+        description: Validate all code base during linting?
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+      DOCKERHUB_PASSWORD:
+        required: false
+
+jobs:
+  lint:
+    name: Lint Code Base
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+          submodules: true
+      # This lints the files that would be touched by the changes proposed in
+      # the PR.
+      -
+        name: Lint Changes in Code Base
+        uses: github/super-linter/slim@v4
+        env:
+          VALIDATE_ALL_CODEBASE: ${{ inputs.full-validation }}
+          VALIDATE_DOCKERFILE_HADOLINT: true
+          VALIDATE_MARKDOWN: true
+          VALIDATE_NATURAL_LANGUAGE: true
+          VALIDATE_YAML: true
+          VALIDATE_SHELL_SHFMT: true
+          DEFAULT_BRANCH: master
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ghcr:
+    runs-on: ubuntu-latest
+    name: GHCR
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+          fetch-depth: 100
+      -
+        name: Login to GHCR
+        uses: docker/login-action@v1
+        if: inputs.push
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      # Discover the semantic version to use, we will use it as the tag for the
+      # Docker images that we create.
+      - name: Semantic build-version
+        id: semver
+        uses: Mitigram/gh-action-versioning@v0.2.1
+      -
+        name: Build GHCR images
+        uses: docker/build-push-action@v2
+        with:
+          push: ${{ inputs.push }}
+          tags: >-
+            ghcr.io/${{github.repository}}:${{steps.semver.outputs.semver}}
+
+  hub:
+    runs-on: ubuntu-latest
+    name: DockerHub
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+          fetch-depth: 100
+      -
+        name: Login to Docker Hub
+        id: login
+        if: inputs.push
+        continue-on-error: true
+        uses: docker/login-action@v1
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      # Discover the semantic version to use, we will use it as the tag for the
+      # Docker images that we create.
+      - name: Semantic build-version
+        id: semver
+        uses: Mitigram/gh-action-versioning@v0.2.1
+      -
+        name: Build Docker Hub images
+        uses: docker/build-push-action@v2
+        if: steps.login.outcome == 'success'
+        with:
+          push: ${{ inputs.push }}
+          tags: >-
+            docker.io/${{github.repository}}:${{steps.semver.outputs.semver}}
+      -
+        # Note: This uses the password, not the token as this action would
+        # otherwise not work.
+        name: Update repo description at Docker Hub
+        uses: peter-evans/dockerhub-description@v2
+        if: inputs.push && steps.login.outcome == 'success'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          repository: ${{ github.repository }}
+          short-description: >-
+            Simple solution to perform regular SQLite3 backups and remove older
+            ones
