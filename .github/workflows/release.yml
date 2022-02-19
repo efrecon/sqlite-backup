@@ -31,7 +31,7 @@ jobs:
       # Discover the semantic version to use
       - name: Semantic build-version
         id: semver
-        uses: Mitigram/gh-action-versioning@v0.2.0
+        uses: Mitigram/gh-action-versioning@v0.2.1
 
       # Extract release notes from the CHANGELOG.md file. In the awk script, p
       # is a flag and means: should we print? This works by turning on printing

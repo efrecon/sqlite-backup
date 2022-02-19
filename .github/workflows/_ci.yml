@@ -72,7 +72,7 @@ jobs:
       # Docker images that we create.
       - name: Semantic build-version
         id: semver
-        uses: Mitigram/gh-action-versioning@v0.2.0
+        uses: Mitigram/gh-action-versioning@v0.2.1
       -
         name: Build GHCR images
         uses: docker/build-push-action@v2
@@ -108,7 +108,7 @@ jobs:
       # Docker images that we create.
       - name: Semantic build-version
         id: semver
-        uses: Mitigram/gh-action-versioning@v0.2.0
+        uses: Mitigram/gh-action-versioning@v0.2.1
       -
         name: Build Docker Hub images
         uses: docker/build-push-action@v2
