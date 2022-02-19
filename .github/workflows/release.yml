@@ -10,6 +10,8 @@ jobs:
     name: Build
     if: startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/_ci.yml
+    with:
+      full-validation: true
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

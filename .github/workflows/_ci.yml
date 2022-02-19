@@ -9,6 +9,11 @@ on:
         type: boolean
         default: true
         description: Publish Docker image that was built
+      full-validation:
+        required: false
+        type: boolean
+        default: false
+        description: Validate all code base during linting?
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -18,6 +23,29 @@ on:
         required: false
 
 jobs:
+  lint:
+    name: Lint Code Base
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+          submodules: true
+      # This lints the files that would be touched by the changes proposed in
+      # the PR.
+      -
+        name: Lint Changes in Code Base
+        uses: github/super-linter/slim@v4
+        env:
+          VALIDATE_ALL_CODEBASE: ${{ inputs.full-validation }}
+          VALIDATE_DOCKERFILE_HADOLINT: true
+          VALIDATE_MARKDOWN: true
+          VALIDATE_NATURAL_LANGUAGE: true
+          VALIDATE_YAML: true
+          DEFAULT_BRANCH: master
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   ghcr:
     runs-on: ubuntu-latest
     steps:

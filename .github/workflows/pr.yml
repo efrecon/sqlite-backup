@@ -1,0 +1,12 @@
+name: Publish
+
+on:
+  pull_request:
+
+jobs:
+  PR:
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    uses: ./.github/workflows/_ci.yml
+    with:
+      push: false
+
