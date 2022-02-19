@@ -10,10 +10,6 @@ on:
         default: true
         description: Publish Docker image that was built
     secrets:
-      GITHUB_TOKEN:
-        required: false
-        description: |
-          Secret token for access to the GHCR
       DOCKERHUB_USERNAME:
         required: false
       DOCKERHUB_TOKEN:
@@ -24,7 +20,6 @@ on:
 jobs:
   ghcr:
     runs-on: ubuntu-latest
-    if: GITHUB_TOKEN != 0
     steps:
       -
         name: Checkout
