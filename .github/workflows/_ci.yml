@@ -48,6 +48,7 @@ jobs:
 
   ghcr:
     runs-on: ubuntu-latest
+    name: GHCR
     steps:
       -
         name: Checkout
@@ -80,6 +81,7 @@ jobs:
 
   hub:
     runs-on: ubuntu-latest
+    name: DockerHub
     steps:
       -
         name: Checkout
