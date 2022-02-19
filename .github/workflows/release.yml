@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  build:
+    name: Build
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/_ci.yml
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 100
+          submodules: true
+
+      # Discover the semantic version to use
+      - name: Semantic build-version
+        id: semver
+        uses: Mitigram/gh-action-versioning@v0.2.0
+
+      # Extract release notes from the CHANGELOG.md file. In the awk script, p
+      # is a flag and means: should we print? This works by turning on printing
+      # as soon as awk encounters a line that start with ## and contain then the
+      # tag of the release. Printing is turned off at the next section (i.e.
+      # next time awk encounters ## again)
+      - name: Create Release Notes
+        run: |
+          awk "/^## / { p=0 }; p; /^## v${{ steps.semver.outputs.semver }}/ { p=1 }" CHANGELOG.md > ${{ runner.temp }}/relnotes.md
+          cat "${{ runner.temp }}/relnotes.md"
+
+      # Whereever the files are located down the area that we have prepared for
+      # the release, they will be picked and form the files available as part of
+      # the relase at GitHub, without any sub-directories. In other words, the
+      # content of the release directory that we have created will be flattened
+      # out when releasing.
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.semver.outputs.tag }}
+          body: v${{ steps.semver.outputs.semver }}
+          body_path: ${{ runner.temp }}/relnotes.md
