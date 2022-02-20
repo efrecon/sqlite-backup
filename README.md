@@ -14,21 +14,32 @@ as [dockron].
 This shell (not bash) script has the following options:
 
 ```text
+./backup.sh will backup all tables of the SQLite databases passed as arguments,
+and rotate dumps to keep disk usage under control. Dumps can be in
+textual form (an SQL dump), or as another identical SQLite database
+file.
+
+Options:
+    -k | --keep:        Number of backups to keep, defaults to empty, meaning keep all backups
+    -d | --dest | --destination:        Directory where to place (and rotate) backups.
+    -n | --name:        Basename for file/dir to create, %-tags allowed, defaults to: %f-%Y%m%d-%H%M%S.sql.gz.
+    -v | --verbose:     Be more verbose
+    -t | --then:        Command to execute once done, path to backup will be passed as an argument.
+    -r | --retries:     Number of times to retry backup operation.
+    -s | --sleep:       Number of seconds to sleep between backup attempts
+    -P | --pending:     Extension to give to file while creating backup
+    -T | --timeout:     Timeout in ms to acquire DB lock
+    -o | --output:      Output type: auto (the default), sql or db (or bin). When auto, guessed from file extension.
+    -c | --compression: Compression level. When empty, the default, default compression will be triggered when name ends with .gz.
+    --with-arg: Pass created path to backup file to command
+    --no-arg:   Do not pass path to backup file to command
+    -h | --help:        Print this help and exit
+
 Description:
-  $cmdname will backup all tables of a SQLite database, and rotate dumps to
-  keep disk usage under control.
-
-Usage:
-  $cmdname [-option arg]...
-
-  where all dash-led single options are as follows:
-    -v              Be more verbose
-    -f database     Path to DB file to backup (mandatory)
-    -d destination  Directory where to place (and rotate) backups.
-    -n basename     Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql
-    -k keep         Number of backups to keep, defaults to empty, meaning keep all backups
-    -t command      Command to execute once done, path to backup will be passed as an argument.
-    -P pending      Extension to give to file while creating backup
+In the backup name, specified by -n, most %-led tags will be passed to
+the date command with the current date and time. Two extra format
+strings are supported: %o and %f mean basename of the db file, with and
+without extensions.
 ```
 
 Note that for the removal of older backups to properly function, `backup.sh`
