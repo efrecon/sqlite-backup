@@ -1,27 +1,61 @@
 #!/bin/sh
 
-
 if [ -t 1 ]; then
     INTERACTIVE=1
 else
     INTERACTIVE=0
 fi
 
-# All (good?) defaults, we are also able to pick some of the POSTGRES_ led
-# variables so as to be able to more easily share secrets with a postgres Docker
-# image.
+# Increase the verbosity of this script when setting this to 1. Otherwise, only
+# warnings will be logged.
 SQLITE_BACKUP_VERBOSE=${SQLITE_BACKUP_VERBOSE:-0}
-SQLITE_BACKUP_KEEP=${SQLITE_BACKUP_KEEP:-""}
-SQLITE_BACKUP_DB=${SQLITE_BACKUP_DB:-""}
+
+# Destination directory where to place the backups, it will be created if it
+# does not exist. Default to current directory.
 SQLITE_BACKUP_DESTINATION=${SQLITE_BACKUP_DESTINATION:-"."}
-SQLITE_BACKUP_NAME=${SQLITE_BACKUP_NAME:-"%Y%m%d-%H%M%S.sql"}
+
+# Name of the backup files to create in the destination directory. This support
+# %-led date formating tokens, but also supports %f where %f is the basename of
+# the original file, without extension and %o, the name of the original file.
+# When the output is auto the default, the extension will decide upon the type
+# of the backup (textual SQL dump, or binary SQLite file). Also when .gz is
+# added, and compression is empty (the default), destination backups will be
+# compressed at the default gzip level.
+SQLITE_BACKUP_NAME=${SQLITE_BACKUP_NAME:-"%f-%Y%m%d-%H%M%S.sql"}
+
+# How many backups of a given database to keep in the destination directory. The
+# default is an empty string, i.e. keep all backups.
+SQLITE_BACKUP_KEEP=${SQLITE_BACKUP_KEEP:-""}
+
+# Backups will have the following extension while in progress. They will be
+# renamed once all operations are done.
 SQLITE_BACKUP_PENDING=${SQLITE_BACKUP_PENDING:-".pending"}
+
+# Command to execute once all backups have been done. The path to the
+# destination backups, in the order of the original DB file paths arguments will
+# be appended to the command (unless see next variable).
 SQLITE_BACKUP_THEN=${SQLITE_BACKUP_THEN:-""}
+
+# Should the path to the backups be passed as argument to the command to execute
+# once all backups have been done?
 SQLITE_BACKUP_WITHARG=${SQLITE_BACKUP_WITHARG:-1}
+
+# Number of times to retry each backup
 SQLITE_BACKUP_RETRIES=${SQLITE_BACKUP_RETRIES:-0}
+
+# Number of seconds to wait between retries.
 SQLITE_BACKUP_SLEEP=${SQLITE_BACKUP_SLEEP:-5}
+
+# Number of ms to wait while acquiring a lock on the SQLite DB
 SQLITE_BACKUP_TIMEOUT=${SQLITE_BACKUP_TIMEOUT:-"5000"}
+
+# Type of the backup, one of `auto` (decided by the extension of the name of the
+# backup, see above), `dump` or `sql` for textual SQL dumps, `bin`, `db`,
+# `sqlite` fo binary DB perfect copies.
 SQLITE_BACKUP_OUTPUT=${SQLITE_BACKUP_OUTPUT:-"auto"}
+
+# Compression level. Empty for letting the extension of the backup name to
+# decide, 0 to switch off, otherwise a level suitable for `gzip`.
 SQLITE_BACKUP_COMPRESSION=${SQLITE_BACKUP_COMPRESSION:-""}
 
 # Dynamic vars
@@ -31,9 +65,10 @@ appname=${cmdname%.*}
 # Print usage on stderr and exit
 usage() {
     sed -E 's/^\s+//g' <<-EOF
-        $0 will backup all tables of a SQLite database, and rotate dumps to
-        keep disk usage under control. Dumps can be in textual form (an SQL
-        dump), or as another identical SQLite database file.
+        $0 will backup all tables of the SQLite databases passed as arguments,
+        and rotate dumps to keep disk usage under control. Dumps can be in
+        textual form (an SQL dump), or as another identical SQLite database
+        file.
 
         Options:
 EOF
@@ -41,29 +76,32 @@ EOF
         grep -E '\s+-[a-zA-Z-].*)\s+#' |
         sed -E \
             -e 's/^\s+/    /g' \
-            -e 's/)\s+#\s+/:\t/g'
+            -e 's/\)\s+#\s+/:\t/g'
+    sed -E 's/^\s+//g' <<EOF
+
+        Description:
+        In the backup name, specified by -n, most %-led tags will be passed to
+        the date command with the current date and time. Two extra format
+        strings are supported: %o and %f mean basename of the db file, with and
+        without extensions.
+EOF
     exit "${1:-0}"
 }
 
 # Parse options
-while [ $# -gt 0 ]; do
+while [ "$#" -gt "0" ]; do
     case "$1" in
         -k | --keep) # Number of backups to keep, defaults to empty, meaning keep all backups
             SQLITE_BACKUP_KEEP=$2; shift 2;;
         --keep=*)
             SQLITE_BACKUP_KEEP="${1#*=}"; shift 1;;
 
-        -f | --file | --db | --database) # Path to DB file to backup (mandatory)
-            SQLITE_BACKUP_DB=$2; shift 2;;
-        --file=* | --db=* | --database=*)
-            SQLITE_BACKUP_DB="${1#*=}"; shift 1;;
-
         -d | --dest | --destination) # Directory where to place (and rotate) backups.
             SQLITE_BACKUP_DESTINATION=$2; shift 2;;
         --dest=* | --destination=*)
             SQLITE_BACKUP_DESTINATION="${1#*=}"; shift 1;;
 
-        -n | --name) # Basename for file/dir to create, date-tags allowed, defaults to: %Y%m%d-%H%M%S.sql.gz
+        -n | --name) # Basename for file/dir to create, %-tags allowed, defaults to: %f-%Y%m%d-%H%M%S.sql.gz.
             SQLITE_BACKUP_NAME=$2; shift 2;;
         --name=*)
             SQLITE_BACKUP_NAME="${1#*=}"; shift 1;;
@@ -118,6 +156,8 @@ while [ $# -gt 0 ]; do
             shift; break;;
         -*)
             echo "Unknown option: $1 !" >&2 ; usage 1;;
+        *)
+            break;;
     esac
 done
 
@@ -146,15 +186,21 @@ warn() {
     echo "[$(blue "$appname")] [$(red WARN)] [$(date +'%Y%m%d-%H%M%S')] $1" >&2
 }
 
+# Retry the command formed by all arguments as many times as told by the
+# options, sleeping in between.
 retry() {
+    #shellcheck disable=SC3043 # local is available in most shells.
+    local retries || true
+
+    retries="$SQLITE_BACKUP_RETRIES"
     while true; do
         if "$@"; then
             break
         fi
 
-        if [ "$SQLITE_BACKUP_RETRIES" -gt "1" ]; then
-            SQLITE_BACKUP_RETRIES=$(( SQLITE_BACKUP_RETRIES - 1 ))
-            log "Failed! $SQLITE_BACKUP_RETRIES retries left"
+        if [ "$retries" -gt "1" ]; then
+            retries=$(( retries - 1 ))
+            log "Failed! $retries retries left"
             sleep "$SQLITE_BACKUP_SLEEP"
         else
             return 1
@@ -167,7 +213,7 @@ retry() {
 backups() {
     find "$SQLITE_BACKUP_DESTINATION" \
             -maxdepth 1 \
-            -name "$(printf %s\\n "$SQLITE_BACKUP_NAME" | sed 's/%[a-zA-Z]/*/g')" \
+            -name "$(basename_subst "$1" | sed 's/%[a-zA-Z]/*/g')" \
             -type f \
             -print0 |
         xargs -0 ls -1rt
@@ -203,10 +249,16 @@ compress() {
     fi
 }
 
-# No DB to backup. Bail out!
-if [ -z "$SQLITE_BACKUP_DB" ]; then
-    warn "No path to DB!"
-    usage 1
+basename_subst() {
+    printf %s\\n "$SQLITE_BACKUP_NAME" |
+                sed \
+                    -e "s/%o/${1}/g" \
+                    -e "s/%f/${1%%.*}/g"
+}
+
+
+if [ "$#" = "0" ]; then
+    usage
 fi
 
 # Guess output type out of backup file name template extension (no ending $ to
@@ -227,73 +279,100 @@ if [ -n "$SQLITE_BACKUP_COMPRESSION" ] && [ "$SQLITE_BACKUP_COMPRESSION" -gt "0"
     log "Automatically added .gz extension -> $SQLITE_BACKUP_NAME"
 fi
 
-# Decide name of destination file, this takes into account the pending
-# extension, if relevant.
-ZFILE=$(date +"$SQLITE_BACKUP_NAME")
-FILE=$(printf %s\\n "$ZFILE" | sed -E 's/\.gz$//')
-if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
-    DSTFILE=${FILE}.${SQLITE_BACKUP_PENDING##.}
-else
-    DSTFILE=${FILE}
-fi
+# Collect all file arguments into the files variable. This will work as long as
+# the filename does not contain a line break.
+files=
+for fname; do
+    files="${files}$(printf \\n%s "$fname")"
+done
 
-# Create directory if it does not exist
-if ! [ -d "${SQLITE_BACKUP_DESTINATION}" ]; then
-    log "Creating destination directory ${SQLITE_BACKUP_DESTINATION}"
-    mkdir -p "${SQLITE_BACKUP_DESTINATION}"
-fi
+# Loose all positional arguments, we are going to reconstruct them using with
+# the name of the generated backups.
+set --
 
-# Install (pending) backup file into proper name if relevant, or remove it
-# from disk.
-log "Starting backup of all databases to $ZFILE"
-case "$SQLITE_BACKUP_OUTPUT" in
-    dump | sql)
-        if ! retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
-                ".timeout $SQLITE_BACKUP_TIMEOUT" \
-                .dump \
-                .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
-            warn "Could not create backup!"
-            rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
+while IFS= read -r fname; do
+    if [ -n "$fname" ]; then
+        bname=$(basename "$fname")
+
+        # Decide name of destination file by passing it to the date command. It also
+        # supports two additional %-led formats: %o is the basename of the database
+        # file and %f the basename without any extensions. This takes into account
+        # the pending extension, if relevant.
+        ZFILE=$(date +"$(basename_subst "$bname")")
+        FILE=$(printf %s\\n "$ZFILE" | sed -E 's/\.gz$//')
+        if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
+            DSTFILE=${FILE}.${SQLITE_BACKUP_PENDING##.}
+        else
+            DSTFILE=${FILE}
         fi
-        ;;
-    db | bin | sqlite*)
-        if ! retry sqlite3 -readonly "$SQLITE_BACKUP_DB" \
-                ".timeout $SQLITE_BACKUP_TIMEOUT" \
-                ".backup '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'" \
-                .exit; then
-            warn "Could not create backup!"
-            rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
-        fi
-        ;;
-    *)
-        warn "$SQLITE_BACKUP_OUTPUT is not a recognised backup output type"
-        usage 1
-        ;;
-esac
 
-# Compress on demand when we have succeeded making a backup
-if [ -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" ]; then
-    if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
-        mv -f "$(compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}")" "${SQLITE_BACKUP_DESTINATION}/${ZFILE}"
-    else
-        compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" > /dev/null
+        # Create directory if it does not exist
+        if ! [ -d "${SQLITE_BACKUP_DESTINATION}" ]; then
+            log "Creating destination directory ${SQLITE_BACKUP_DESTINATION}"
+            mkdir -p "${SQLITE_BACKUP_DESTINATION}"
+        fi
+
+        # Install (pending) backup file into proper name if relevant, or remove it
+        # from disk.
+        log "Starting backup of all databases from $fname to $ZFILE"
+        case "$SQLITE_BACKUP_OUTPUT" in
+            dump | sql)
+                if ! retry sqlite3 -readonly "$fname" \
+                        ".timeout $SQLITE_BACKUP_TIMEOUT" \
+                        .dump \
+                        .exit > "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}"; then
+                    warn "Could not create backup!"
+                    rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
+                fi
+                ;;
+            db | bin | sqlite*)
+                if ! retry sqlite3 -readonly "$fname" \
+                        ".timeout $SQLITE_BACKUP_TIMEOUT" \
+                        ".backup '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'" \
+                        .exit; then
+                    warn "Could not create backup!"
+                    rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"
+                fi
+                ;;
+            *)
+                warn "$SQLITE_BACKUP_OUTPUT is not a recognised backup output type"
+                usage 1
+                ;;
+        esac
+
+        # Compress on demand when we have succeeded making a backup
+        if [ -f "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" ]; then
+            if [ -n "${SQLITE_BACKUP_PENDING}" ]; then
+                mv -f "$(compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}")" "${SQLITE_BACKUP_DESTINATION}/${ZFILE}"
+            else
+                compress "${SQLITE_BACKUP_DESTINATION}/${DSTFILE}" > /dev/null
+            fi
+            # Print out progress and reconstruct argument list with the paths to
+            # the destinations.
+            log "Backup of $fname done"
+            set -- "$@" "${SQLITE_BACKUP_DESTINATION}/$ZFILE"
+        fi
+
+        if [ -n "${SQLITE_BACKUP_KEEP}" ]; then
+            while [ "$(backups "$bname" | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
+                DELETE=$(backups "$bname" | head -n 1)
+                log "Removing old backup $DELETE"
+                rm -rf "$DELETE"
+            done
+        fi
     fi
-    log "Backup done"
-fi
-
-if [ -n "${SQLITE_BACKUP_KEEP}" ]; then
-    while [ "$(backups | wc -l)" -gt "$SQLITE_BACKUP_KEEP" ]; do
-        DELETE=$(backups | head -n 1)
-        log "Removing old backup $DELETE"
-        rm -rf "$DELETE"
-    done
-fi
+done <<EOF
+$(printf %s\\n "$files")
+EOF
 
 if [ -n "${SQLITE_BACKUP_THEN}" ]; then
     log "Executing ${SQLITE_BACKUP_THEN}"
-    if [ -f "${SQLITE_BACKUP_DESTINATION}/$ZFILE" ] && [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
-        eval "${SQLITE_BACKUP_THEN}" "${SQLITE_BACKUP_DESTINATION}/$ZFILE"
+    if [ "$SQLITE_BACKUP_WITHARG" = "1" ]; then
+        # shellcheck disable=SC2086 # We WANT word splitting!
+        set -- ${SQLITE_BACKUP_THEN} "$@"
     else
-        eval "${SQLITE_BACKUP_THEN}"
+        # shellcheck disable=SC2086 # We WANT word splitting!
+        set -- ${SQLITE_BACKUP_THEN}
     fi
+    exec "$@"
 fi
