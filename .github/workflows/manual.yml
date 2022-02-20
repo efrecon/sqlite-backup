@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       push:
+        description: Publish Docker image that was built
         required: false
         type: boolean
-        default: false
-        description: Publish Docker image that was built
+        default: 'false'
 
 jobs:
   Publish:
