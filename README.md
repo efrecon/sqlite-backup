@@ -74,10 +74,10 @@ generate a backup and dump it to the standard out.
 docker run -it --rm \
   -v $(cwd):/data \
   efrecon/sqlite-backup \
-    -f /data/db.sqlite3 \
     -k 10 \
     -d /tmp \
-    -t cat
+    -t cat \
+    /data/db.sqlite3
 ```
 
 In practice, this will:
