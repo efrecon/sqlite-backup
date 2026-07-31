@@ -49,6 +49,10 @@ SQLITE_BACKUP_SLEEP=${SQLITE_BACKUP_SLEEP:-5}
 # Number of ms to wait while acquiring a lock on the SQLite DB
 SQLITE_BACKUP_TIMEOUT=${SQLITE_BACKUP_TIMEOUT:-"5000"}
 
+# SQLite command to use for binary backups. Defaults to .backup but can be
+# changed to VACUUM INTO.
+SQLITE_BACKUP_COMMAND=${SQLITE_BACKUP_COMMAND:-".backup"}
+
 # Type of the backup, one of `auto` (decided by the extension of the name of the
 # backup, see above), `dump` or `sql` for textual SQL dumps, `bin`, `db`,
 # `sqlite` fo binary DB perfect copies.
@@ -133,6 +137,11 @@ while [ "$#" -gt "0" ]; do
             SQLITE_BACKUP_TIMEOUT=$2; shift 2;;
         --timeout=*)
             SQLITE_BACKUP_TIMEOUT="${1#*=}"; shift 1;;
+
+        -C | --command) # Command to use for binary backups: .backup (default) or "VACUUM INTO".
+            SQLITE_BACKUP_COMMAND=$2; shift 2;;
+        --command=*)
+            SQLITE_BACKUP_COMMAND="${1#*=}"; shift 1;;
 
         -o | --output) # Output type: auto (the default), sql or db (or bin). When auto, guessed from file extension.
             SQLITE_BACKUP_OUTPUT=$2; shift 2;;
@@ -261,6 +270,20 @@ if [ "$#" = "0" ]; then
     usage
 fi
 
+# Validate and normalize SQLITE_BACKUP_COMMAND
+case "$(printf "%s" "$SQLITE_BACKUP_COMMAND" | tr '[:upper:]' '[:lower:]')" in
+    .backup | backup | default)
+        SQLITE_BACKUP_COMMAND=".backup"
+        ;;
+    vacuum | "vacuum into")
+        SQLITE_BACKUP_COMMAND="VACUUM INTO"
+        ;;
+    *)
+        warn "Unknown backup command: $SQLITE_BACKUP_COMMAND ! Allowed values: .backup, backup, default, VACUUM, VACUUM INTO."
+        usage 1
+        ;;
+esac
+
 # Guess output type out of backup file name template extension (no ending $ to
 # be sure we can have .gz also).
 if [ "$SQLITE_BACKUP_OUTPUT" = "auto" ]; then
@@ -270,6 +293,12 @@ if [ "$SQLITE_BACKUP_OUTPUT" = "auto" ]; then
         SQLITE_BACKUP_OUTPUT=db
     fi
     log "Selected output type: $SQLITE_BACKUP_OUTPUT"
+fi
+
+if [ "$SQLITE_BACKUP_OUTPUT" = "dump" ] || [ "$SQLITE_BACKUP_OUTPUT" = "sql" ]; then
+    if [ "$SQLITE_BACKUP_COMMAND" != ".backup" ]; then
+        warn "Output type is $SQLITE_BACKUP_OUTPUT, so binary backup command (-C) '$SQLITE_BACKUP_COMMAND' will be ignored."
+    fi
 fi
 
 # Automatically add a .gz when compression is turn on by force and to a give
@@ -326,9 +355,17 @@ while IFS= read -r fname; do
                 fi
                 ;;
             db | bin | sqlite*)
+                case "$SQLITE_BACKUP_COMMAND" in
+                    .*)
+                        backup_cmd="${SQLITE_BACKUP_COMMAND} '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'"
+                        ;;
+                    *)
+                        backup_cmd="${SQLITE_BACKUP_COMMAND} '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}';"
+                        ;;
+                esac
                 if ! retry sqlite3 -readonly "$fname" \
                         ".timeout $SQLITE_BACKUP_TIMEOUT" \
-                        ".backup '${SQLITE_BACKUP_DESTINATION}/${DSTFILE}'" \
+                        "$backup_cmd" \
                         .exit; then
                     warn "Could not create backup!"
                     rm -rf "${SQLITE_BACKUP_DESTINATION:?}/$DSTFILE"

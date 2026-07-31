@@ -29,6 +29,7 @@ Options:
     -s | --sleep:       Number of seconds to sleep between backup attempts
     -P | --pending:     Extension to give to file while creating backup
     -T | --timeout:     Timeout in ms to acquire DB lock
+    -C | --command:     Command to use for binary backups: .backup (default) or "VACUUM INTO".
     -o | --output:      Output type: auto (the default), sql or db (or bin). When auto, guessed from file extension.
     -c | --compression: Compression level. When empty, the default, default compression will be triggered when name ends with .gz.
     --with-arg: Pass created path to backup file to command
